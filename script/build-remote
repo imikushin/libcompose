@@ -1,0 +1,28 @@
+#!/bin/bash
+set -e
+
+. $(dirname $0)/build-common
+
+BUILD_CONTAINER=$(docker run -d docker-compose gox "${OS_PLATFORM_ARG[@]}" "${OS_ARCH_ARG[@]}" -output="docker-compose_{{.OS}}-{{.Arch}}" -ldflags="-w -X github.com/docker/libcompose/version.GITCOMMIT `git rev-parse --short HEAD`" ./cli/main)
+cleanup_container() {
+    docker rm -v ${BUILD_CONTAINER}
+}
+trap cleanup_container EXIT
+
+docker logs -f ${BUILD_CONTAINER} &
+BUILD_STATUS=$(docker wait ${BUILD_CONTAINER})
+if [[ ${BUILD_STATUS} != 0 ]]; then exit ${BUILD_STATUS}; fi
+
+BUILT_IMAGE=$(docker commit ${BUILD_CONTAINER})
+cleanup_image() {
+    cleanup_container
+    docker rmi ${BUILT_IMAGE}
+}
+trap cleanup_image EXIT
+
+echo "Copying built binaries to ./:"
+for f in $(docker run --rm ${BUILT_IMAGE} sh -c 'echo docker-compose_*'); do
+    echo "  "${f}
+    docker cp ${BUILD_CONTAINER}:/go/src/github.com/docker/libcompose/${f} ./
+done
+echo Done
